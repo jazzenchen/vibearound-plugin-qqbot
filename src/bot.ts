@@ -116,7 +116,7 @@ export class QQBot {
   private reconnectAttempts = 0;
   private stopped = false;
 
-  /** channelId → context for the most recent inbound message. */
+  /** chatId → context for the most recent inbound message. */
   private pending = new Map<string, PendingContext>();
 
   constructor(config: QQBotConfig, agent: Agent, log: LogFn, cacheDir: string) {
@@ -154,10 +154,10 @@ export class QQBot {
     return this.accessToken;
   }
 
-  async sendText(channelId: string, content: string): Promise<void> {
-    const ctx = this.pending.get(channelId);
+  async sendText(chatId: string, content: string): Promise<void> {
+    const ctx = this.pending.get(chatId);
     if (!ctx) {
-      this.log("warn", `no pending context for channel=${channelId}, dropping reply`);
+      this.log("warn", `no pending context for chat=${chatId}, dropping reply`);
       return;
     }
     try {
@@ -340,13 +340,13 @@ export class QQBot {
     if (!senderOpenid) return;
     if (!text && !event.attachments?.length) return;
 
-    const channelId = `qqbot:c2c:${senderOpenid}`;
-    this.pending.set(channelId, { msgId: event.id, target: senderOpenid, kind: "c2c" });
+    const chatId = `c2c:${senderOpenid}`;
+    this.pending.set(chatId, { msgId: event.id, target: senderOpenid, kind: "c2c" });
     this.log(
       "debug",
-      `c2c chat=${channelId} text=${text.slice(0, 80)} attachments=${event.attachments?.length ?? 0}`,
+      `c2c chat=${chatId} text=${text.slice(0, 80)} attachments=${event.attachments?.length ?? 0}`,
     );
-    await this.dispatchPrompt(channelId, text, event.attachments);
+    await this.dispatchPrompt(chatId, text, event.attachments);
   }
 
   private async handleGroupAtMessage(event: DispatchEvent): Promise<void> {
@@ -355,13 +355,13 @@ export class QQBot {
     if (!groupOpenid) return;
     if (!text && !event.attachments?.length) return;
 
-    const channelId = `qqbot:group:${groupOpenid}`;
-    this.pending.set(channelId, { msgId: event.id, target: groupOpenid, kind: "group" });
+    const chatId = `group:${groupOpenid}`;
+    this.pending.set(chatId, { msgId: event.id, target: groupOpenid, kind: "group" });
     this.log(
       "debug",
-      `group chat=${channelId} text=${text.slice(0, 80)} attachments=${event.attachments?.length ?? 0}`,
+      `group chat=${chatId} text=${text.slice(0, 80)} attachments=${event.attachments?.length ?? 0}`,
     );
-    await this.dispatchPrompt(channelId, text, event.attachments);
+    await this.dispatchPrompt(chatId, text, event.attachments);
   }
 
   private async handleAtMessage(event: DispatchEvent): Promise<void> {
@@ -370,13 +370,13 @@ export class QQBot {
     if (!channelId) return;
     if (!text && !event.attachments?.length) return;
 
-    const ourId = `qqbot:channel:${channelId}`;
-    this.pending.set(ourId, { msgId: event.id, target: channelId, kind: "channel" });
+    const chatId = `channel:${channelId}`;
+    this.pending.set(chatId, { msgId: event.id, target: channelId, kind: "channel" });
     this.log(
       "debug",
-      `channel chat=${ourId} text=${text.slice(0, 80)} attachments=${event.attachments?.length ?? 0}`,
+      `channel chat=${chatId} text=${text.slice(0, 80)} attachments=${event.attachments?.length ?? 0}`,
     );
-    await this.dispatchPrompt(ourId, text, event.attachments);
+    await this.dispatchPrompt(chatId, text, event.attachments);
   }
 
   private async handleDmMessage(event: DispatchEvent): Promise<void> {
@@ -385,17 +385,17 @@ export class QQBot {
     if (!guildId) return;
     if (!text && !event.attachments?.length) return;
 
-    const channelId = `qqbot:dm:${guildId}`;
-    this.pending.set(channelId, { msgId: event.id, target: guildId, kind: "dm" });
+    const chatId = `dm:${guildId}`;
+    this.pending.set(chatId, { msgId: event.id, target: guildId, kind: "dm" });
     this.log(
       "debug",
-      `dm chat=${channelId} text=${text.slice(0, 80)} attachments=${event.attachments?.length ?? 0}`,
+      `dm chat=${chatId} text=${text.slice(0, 80)} attachments=${event.attachments?.length ?? 0}`,
     );
-    await this.dispatchPrompt(channelId, text, event.attachments);
+    await this.dispatchPrompt(chatId, text, event.attachments);
   }
 
   private async dispatchPrompt(
-    channelId: string,
+    chatId: string,
     text: string,
     attachments?: DispatchAttachment[],
   ): Promise<void> {
@@ -405,19 +405,13 @@ export class QQBot {
       contentBlocks.push({ type: "text", text });
     }
 
-    // Download QQ attachments into the plugin cache so ACPPod can relocate
-    // them into the workspace cache. QQ CDN URLs are short-lived signed
-    // URLs and work without auth — we just need to fetch them.
     const downloaded: DownloadedAttachment[] = [];
     for (const attachment of attachments ?? []) {
       if (!attachment.url) continue;
-      const local = await this.downloadAttachment(channelId, attachment).catch(
+      const local = await this.downloadAttachment(chatId, attachment).catch(
         (err: unknown) => {
           const msg = err instanceof Error ? err.message : String(err);
-          this.log(
-            "warn",
-            `failed to download qqbot attachment ${attachment.url}: ${msg}`,
-          );
+          this.log("warn", `failed to download attachment ${attachment.url}: ${msg}`);
           return null;
         },
       );
@@ -442,15 +436,15 @@ export class QQBot {
 
     if (contentBlocks.length === 0) return;
 
-    this.streamHandler?.onPromptSent(channelId);
+    this.streamHandler?.onPromptSent(chatId);
 
     try {
       const response = await this.agent.prompt({
-        sessionId: channelId,
+        sessionId: chatId,
         prompt: contentBlocks,
       });
-      this.log("info", `prompt done chat=${channelId} stopReason=${response.stopReason}`);
-      this.streamHandler?.onTurnEnd(channelId);
+      this.log("info", `prompt done chat=${chatId} stopReason=${response.stopReason}`);
+      this.streamHandler?.onTurnEnd(chatId);
     } catch (error: unknown) {
       const errMsg =
         error instanceof Error
@@ -458,24 +452,24 @@ export class QQBot {
           : typeof error === "object" && error !== null && "message" in error
             ? String((error as { message: unknown }).message)
             : String(error);
-      this.log("error", `prompt failed chat=${channelId}: ${errMsg}`);
-      this.streamHandler?.onTurnError(channelId, errMsg);
+      this.log("error", `prompt failed chat=${chatId}: ${errMsg}`);
+      this.streamHandler?.onTurnError(chatId, errMsg);
     }
   }
 
   /**
    * Download a QQ attachment into the plugin cache. Files are keyed by
-   * channelId + the last segment of the URL path so repeated references
+   * chatId + the last segment of the URL path so repeated references
    * to the same file don't re-download.
    */
   private async downloadAttachment(
-    channelId: string,
+    chatId: string,
     attachment: DispatchAttachment,
   ): Promise<DownloadedAttachment> {
     const url = attachment.url!;
     const contentType = attachment.content_type ?? "application/octet-stream";
 
-    const safeChannel = channelId.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const safeChannel = chatId.replace(/[^a-zA-Z0-9._-]/g, "_");
     const dir = path.join(this.cacheDir, "qqbot", safeChannel);
 
     // Build a stable filename: prefer the supplied filename, else derive
@@ -506,7 +500,7 @@ export class QQBot {
 
     this.log(
       "debug",
-      `downloading qqbot attachment chat=${channelId} url=${url}`,
+      `downloading qqbot attachment chat=${chatId} url=${url}`,
     );
     const res = await fetch(url);
     if (!res.ok) {
