@@ -436,6 +436,11 @@ export class QQBot {
 
     if (contentBlocks.length === 0) return;
 
+    const firstText = contentBlocks[0]?.type === "text" ? contentBlocks[0].text : "";
+    if (firstText && this.streamHandler?.consumePendingText(chatId, firstText)) {
+      return;
+    }
+
     this.streamHandler?.onPromptSent(chatId);
 
     try {
